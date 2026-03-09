@@ -1,6 +1,7 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
+const highEl = document.getElementById('high');
 const levelEl = document.getElementById('level');
 const statusEl = document.getElementById('status');
 const restartBtn = document.getElementById('restart');
@@ -13,18 +14,28 @@ const world = {
   level: 1,
   gameOver: false,
   bgOffset: 0,
+  high: Number(localStorage.getItem('rainboy-highscore') || 0),
+  bossActive: false,
 };
 
-const player = {
-  x: 140,
-  y: 250,
-  w: 56,
-  h: 36,
-  vy: 0,
-};
-
+const player = { x: 140, y: 250, w: 56, h: 36, vy: 0 };
 let dinos = [];
 let obstacles = [];
+
+function playBeep(freq = 440, time = 0.08, type = 'square') {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    o.connect(g);
+    g.connect(ac.destination);
+    g.gain.value = 0.02;
+    o.start();
+    o.stop(ac.currentTime + time);
+  } catch {}
+}
 
 function reset() {
   world.speed = 3;
@@ -33,16 +44,29 @@ function reset() {
   world.level = 1;
   world.gameOver = false;
   world.bgOffset = 0;
+  world.bossActive = false;
   player.y = 250;
   player.vy = 0;
   dinos = [];
   obstacles = [];
   statusEl.textContent = 'Catch dinos (+10), avoid obstacles!';
+  highEl.textContent = `High Score: ${world.high}`;
 }
 
-function spawnDino() {
+function spawnDino(isBoss = false) {
   const y = 70 + Math.random() * (canvas.height - 140);
-  dinos.push({ x: canvas.width + 30, y, w: 40, h: 26, color: `hsl(${Math.random()*360},80%,55%)` });
+  dinos.push({
+    x: canvas.width + 30,
+    y,
+    w: isBoss ? 70 : 40,
+    h: isBoss ? 42 : 26,
+    boss: isBoss,
+    color: isBoss ? '#ffd93d' : `hsl(${Math.random() * 360},80%,55%)`
+  });
+  if (isBoss) {
+    world.bossActive = true;
+    statusEl.textContent = 'Boss dino appeared! Catch it for +50!';
+  }
 }
 
 function spawnObstacle() {
@@ -87,6 +111,10 @@ function drawDino(d) {
   ctx.fillRect(d.x, d.y, d.w, d.h);
   ctx.fillStyle = '#fff';
   ctx.fillRect(d.x + d.w - 14, d.y + 6, 6, 6);
+  if (d.boss) {
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillRect(d.x + 8, d.y - 8, 54, 6);
+  }
 }
 
 function drawObstacle(o) {
@@ -106,6 +134,14 @@ function updateDifficulty() {
   world.speed = Math.min(8, 3 + world.level * 0.4);
 }
 
+function updateHighScore() {
+  if (world.score > world.high) {
+    world.high = world.score;
+    localStorage.setItem('rainboy-highscore', String(world.high));
+  }
+  highEl.textContent = `High Score: ${world.high}`;
+}
+
 function update() {
   if (world.gameOver) return;
   world.tick++;
@@ -123,7 +159,11 @@ function update() {
   if (world.tick % dinoInterval === 0) spawnDino();
   if (world.tick % obsInterval === 0) spawnObstacle();
 
-  dinos.forEach(d => d.x -= world.speed + 1.3);
+  if (!world.bossActive && world.score > 0 && world.score % 100 === 0 && world.tick % 60 === 0) {
+    spawnDino(true);
+  }
+
+  dinos.forEach(d => d.x -= world.speed + (d.boss ? 0.8 : 1.3));
   obstacles.forEach(o => o.x -= world.speed + 1.8);
 
   dinos = dinos.filter(d => d.x + d.w > -20);
@@ -131,9 +171,16 @@ function update() {
 
   for (let i = dinos.length - 1; i >= 0; i--) {
     if (collide(player, dinos[i])) {
-      world.score += 10;
+      const pts = dinos[i].boss ? 50 : 10;
+      world.score += pts;
+      playBeep(dinos[i].boss ? 760 : 540, 0.09, 'triangle');
+      if (dinos[i].boss) {
+        world.bossActive = false;
+        statusEl.textContent = 'Boss caught! +50 🔥';
+      }
       dinos.splice(i, 1);
       updateDifficulty();
+      updateHighScore();
     }
   }
 
@@ -141,6 +188,8 @@ function update() {
     if (collide(player, o)) {
       world.gameOver = true;
       statusEl.textContent = 'Game Over! Press Restart';
+      playBeep(120, 0.2, 'sawtooth');
+      updateHighScore();
       break;
     }
   }
